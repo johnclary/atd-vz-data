@@ -1,15 +1,12 @@
 # John's Data Model
 
-Which is plagiarized from everyone else's ideas.
+In which everyone else's ideas have been plagiarized.
 
 ## Overview
 
-The data model uses the concept of "private" pre-processing tables which holds data from CRIS and user edits. Data from private tables is pushed (via trigger) into a public table that is used as the official source of truth Vision Zero data consumers.
+The data model uses the concept of "private" pre-processing tables which hold data from CRIS and user edits. Data from private tables is pushed (via trigger) into a public table that is used as the official source of truth Vision Zero data consumers. A more detailed diagram is available [here](https://excalidraw.com/#json=NuBo04VYd2x53aJZBFt9c,o-JWjT8z02KJig02E2DUTg).
 
 ![data model overview diagram](data_model_overview.png)
-
-A more detailed diagram is available [here](https://excalidraw.com/#json=NuBo04VYd2x53aJZBFt9c,o-JWjT8z02KJig02E2DUTg).
-
 
 ## Get it running
 
@@ -17,7 +14,7 @@ Start the VZ cluster as you would normally, from master. The migration `17098368
 
 To start over, you can run:
 
-```
+```shell
 $ hasura migrate apply --down 1 && hasura migrate apply
 ```
 
@@ -27,13 +24,13 @@ $ hasura migrate apply --down 1 && hasura migrate apply
 
 #### Import data
 
-0. BEFORE YOU IMPORT DATA, make sure to disable the debug notices! The `psql` commands below take care of this automatically. If using a different SQL client, do this before you import:
+⚠️ BEFORE YOU IMPORT DATA, make sure to disable the debug notices! The `psql` commands below take care of this automatically. If using a different SQL client, do this before you import 👇 ⚠️
 
 ```sql
 SET client_min_messages TO WARNING;
 ```
 
-1. Download `crashes.csv` and `units.csv` from the Drive folder and save them in this directory (`/atd-vzd`). into the `db. Import each file into the DB (this'll take a few minutes)
+Download `crashes.csv` and `units.csv` from the Drive folder and save them in this directory (`/atd-vzd`). mport each file into `cris_crashes` and `cris_units`, respectively. This will take a few minutes.
 
 ```shell
 # import crashes into db.cris_crashes
@@ -45,7 +42,7 @@ $ psql postgres://visionzero:visionzero@localhost:5432/atd_vz_data -c "SET clien
 
 #### Validation queries
 
-After running each test, you can use these `select` queries to observe the results. We're going to be working with crash ID `9999999`. 
+Throughout the testing, you can use these `select` queries to observe the results. We're going to be working with crash ID `9999999`. 
 
 ```sql
 -- the original CRIS data (each row is a unit with a crash joined to it)
@@ -88,7 +85,7 @@ from
     where units.crash_id = 9999999;
 ```
 
-#### Tests 👨‍🔬
+### Tests 👨‍🔬
 
 0. In order to see the debugging messages, set the message level to NOTICE
 
@@ -96,7 +93,7 @@ from
 SET client_min_messages TO NOTICE;
 ```
 
-1. CRIS user creates a crash record with two unit records. 
+#### 1. CRIS user creates a crash record with two unit records. 
 
 ```sql
 insert into cris_crashes (
@@ -106,7 +103,7 @@ insert into cris_crashes (
 insert into cris_units (unit_id, crash_id, unit_type_id) values (987654321, 9999999, 1), (987654322, 9999999, 1);
 ```
 
-2. VZ user changes a crash’s Location ID by updating the crash lat/lon
+#### 2. VZ user changes a crash’s Location ID by updating the crash lat/lon
 
 ```sql
 update vz_crashes set latitude = 30.36444128, longitude = -97.72865645 where crash_id = 9999999;
@@ -114,34 +111,36 @@ update vz_crashes set latitude = 30.36444128, longitude = -97.72865645 where cra
 
 Observe that the `location_id` of the `crashes` record changes to `AA7729AE83`.
 
-3. VZ user edits a unit type
+#### 3. VZ user edits a unit type
 
 ```sql
 update vz_units set unit_type_id = 3 where unit_id = 987654321;
 ```
 
-4. CRIS user updates the crash lat/lon, and road type
+#### 4. CRIS user updates the crash lat/lon, and road type
 
 ```sql
 update cris_crashes set latitude = 1, longitude = 1, road_type_id = 5 where crash_id = 9999999;
 ```
 
-Observe that these changes are not reflected by querying the `crashes` table because they are overridden by VZ values.
+Observe that the lat/lon changes are not reflected by querying the `crashes` table because they are overridden by VZ values.
 
-5. CRIS user updates a unit type 
+#### 5. CRIS user updates a unit type 
 
 ```sql
 update cris_units set unit_type_id = 4 where unit_id = 987654322;
 ```
 
-6. VZ user adds a custom lookup value and uses it
+#### 6. VZ user adds a custom lookup value and uses it
 
 ```sql
 insert into unit_types (id, description) values (90001, 'custom unit type');
 update vz_units set unit_type_id = 90001 where unit_id = 987654322;
 ```
 
-7. Create a query that demonstrates the correct source of truth when crashes and units have edits from both CRIS and the VZ user
+#### 7. Create a query that demonstrates the correct source of truth when crashes and units have edits from both CRIS and the VZ user
+
+The truth is stored in the `crashes` and `units` table. So just query them as needed.
 
 ```sql
 -- 7a. Query for a single crash by ID
@@ -163,12 +162,11 @@ from
     limit 100000;
 ```
 
-8. Create a query/view that powers a simplified version of the locations table  by calculating total number of units per location 
+#### 8. Create a query/view that powers a simplified version of the locations table  by calculating total number of units per location 
 
 ```sql
 -- this is the top 100 locations ranked by # of crashes 🚀
 select
-    RANK() OVER(ORDER BY count(crashes.crash_id) DESC) location_rank,
     atd_txdot_locations.location_id,
     count(crashes.crash_id) count_of_crashes
 from
@@ -181,16 +179,15 @@ order by
 limit 100;
 ```
 
-9. Add a new editable column to crashes
+#### 9. Add a new editable column to crashes
 
-To accomplish this, we must add the column to all three crashes tables, and update three triggers (CRIS insert, CRIS update, VZ update)
+To accomplish this, we must add the column to all three crashes tables, and update three triggers (CRIS insert, CRIS update, VZ update).
 
 ```sql
--- create the new column
+-- create the new column x 3
 alter table cris_crashes add column is_txdot_awesome boolean default true;
-alter table vz_crashes add column is_txdot_awesome boolean default true;
-alter table crashes add column is_txdot_awesome boolean default true;
-
+alter table vz_crashes add column is_txdot_awesome boolean;
+alter table crashes add column is_txdot_awesome boolean;
 
 -- patch function that runs on CRIS insert
 create or replace function db.cris_crash_insert_rows()
@@ -271,7 +268,9 @@ And now we can use the new column :)
 update vz_crashes set is_txdot_awesome = false where crash_id = 9999999;
 ```
  
-10. Conflict management
+#### 10. Conflict management
+
+*This not currently in scope for the Data Model mvp, but I did this work before we knew that.*
 
 Create a conflict management table
 
@@ -285,7 +284,7 @@ create table db.conflicts (
 );
 ```
 
-Say we want to block conflicts on `road_type_id`. We add a conflict check to the CRIS update trigger. The `if` condition for this will get rather as we add additional fields.
+Say we want to block conflicts on `road_type_id`. We add a conflict check to the CRIS update trigger. The `if` condition for this will get rather long as we add additional fields.
 
 ```sql
 if OLD.road_type_id != NEW.road_type_id and NEW.road_type_id != vz_record.road_type_id then
