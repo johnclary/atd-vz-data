@@ -140,7 +140,7 @@ update vz_units set unit_type_id = 90001 where unit_id = 987654322;
 
 #### 7. Create a query that demonstrates the correct source of truth when crashes and units have edits from both CRIS and the VZ user
 
-The truth is stored in the `crashes` and `units` table. So we can just query them as needed. These queries also construct the `unique_unit_types` column, per the requirements. In reality we would establish dedicated views for columns such as this which be efficiently calculated on the fly.
+The truth is stored in the `crashes` and `units` table. So we can just query them as needed. These queries also construct the `unique_unit_types` column, per the requirements. In reality we would establish dedicated views for computed columns that can be efficiently calculated on the fly.
 
 ```sql
 -- 7a. Query for a single crash by ID
@@ -218,7 +218,7 @@ language plpgsql
 as
 $$
 BEGIN
-    RAISE NOTICE 'Inserting vz_crash and crash rows';
+    RAISE NOTICE 'Inserting vz_crashes and crashes rows';
     -- insert new (editable) vz record (only crash ID)
     INSERT INTO db.vz_crashes (crash_id) values (new.crash_id);
     -- insert new combined / official record
@@ -235,7 +235,7 @@ returns trigger
 language plpgsql
 as $$
 BEGIN
-    RAISE NOTICE 'Refreshing crash ID % due to vz_crash update', new.crash_id;
+    RAISE NOTICE 'Refreshing crash ID % due to vz_crashes update', new.crash_id;
     UPDATE
         db.crashes
     SET
@@ -264,7 +264,7 @@ as $$
 DECLARE
    vz_record  record;
 BEGIN
-    RAISE NOTICE 'Updating crash ID % due to crish_crash update', new.crash_id;
+    RAISE NOTICE 'Updating crash ID % due to crish_crashes update', new.crash_id;
 
     SELECT INTO vz_record *
         FROM db.vz_crashes where crash_id = new.crash_id;
@@ -326,7 +326,7 @@ as $$
 DECLARE
    vz_record  record;
 BEGIN
-    RAISE NOTICE 'Updating crash ID % due to crish_crash update', new.crash_id;
+    RAISE NOTICE 'Updating crash ID % due to crish_crashes update', new.crash_id;
 
     SELECT INTO vz_record *
         FROM db.vz_crashes where crash_id = new.crash_id;

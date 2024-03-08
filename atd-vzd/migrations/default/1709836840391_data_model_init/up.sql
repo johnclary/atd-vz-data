@@ -75,7 +75,7 @@ language plpgsql
 as
 $$
 BEGIN
-    RAISE NOTICE 'Inserting vz_crash and crash rows';
+    RAISE NOTICE 'Inserting vz_crashes and crashes rows';
     -- insert new (editable) vz record (only crash ID)
     INSERT INTO db.vz_crashes (crash_id) values (new.crash_id);
     -- insert new combined / official record
@@ -96,7 +96,7 @@ returns trigger
 language plpgsql
 as $$
 BEGIN
-    RAISE NOTICE 'Refreshing crash ID % due to vz_crash update', new.crash_id;
+    RAISE NOTICE 'Refreshing crash ID % due to vz_crashes update', new.crash_id;
     UPDATE
         db.crashes
     SET
@@ -127,7 +127,7 @@ as $$
 DECLARE
    vz_record  record;
 BEGIN
-    RAISE NOTICE 'Updating crash ID % due to crish_crash update', new.crash_id;
+    RAISE NOTICE 'Updating crash ID % due to cris_crashes update', new.crash_id;
 
     SELECT INTO vz_record *
         FROM db.vz_crashes where crash_id = new.crash_id;
