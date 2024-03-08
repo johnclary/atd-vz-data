@@ -1,6 +1,9 @@
 -- we'll do all our work in a schema called `db`
 create schema db;
 
+-- and we'll set the global search path so we don't have to use the `db` prefix during testing
+alter role visionzero set search_path to db, public;
+
 ---------------------------------------------
 --- Create tables ---------------------------
 ---------------------------------------------
@@ -288,6 +291,3 @@ insert into db.unit_types (description) values
 ('spaceship'),
 ('bicycle'),
 ('other');
-
--- set the global search path to the db schema first (just for funzees)
-alter role visionzero set search_path to db, public;
