@@ -44,36 +44,32 @@ create table db.unit_types (
 
 create table db.cris_units (
     unit_id integer primary key,
-    crash_id integer,
+    crash_id integer not null,
     unit_type_id integer references db.unit_types (id)
 );
+
+create index on db.cris_units (crash_id);
 
 create table db.vz_units (
     unit_id integer primary key,
-    crash_id integer,
+    crash_id integer not null,
     unit_type_id integer references db.unit_types (id)
 );
 
+create index on db.vz_units (crash_id);
+
 create table db.units (
     unit_id integer primary key,
-    crash_id integer references db.crashes (crash_id),
+    crash_id integer not null references db.crashes (crash_id),
     unit_type_id integer references db.unit_types (id)
 );
 
 create index on db.units (crash_id);
 
-create table db.conflicts (
-    id serial primary key,
-    crash_id integer not null,
-    table_name text not null,
-    created_at timestamp with time zone default now(),
-    record jsonb not null
-);
-
 ---------------------------------------------
 --- Create crash triggers -------------------
 ---------------------------------------------
-create or replace function cris_crash_insert_rows()
+create or replace function db.cris_crash_insert_rows()
 returns trigger
 language plpgsql
 as
@@ -93,9 +89,9 @@ $$;
 create trigger insert_new_cris_crash_into_vz_crash
 after insert on db.cris_crashes
 for each row
-execute procedure cris_crash_insert_rows();
+execute procedure db.cris_crash_insert_rows();
 
-create or replace function vz_crash_update()
+create or replace function db.vz_crash_update()
 returns trigger
 language plpgsql
 as $$
@@ -122,27 +118,20 @@ $$;
 create trigger update_crash_from_vz_crash_update
 after update on db.vz_crashes
 for each row
-execute procedure vz_crash_update();
+execute procedure db.vz_crash_update();
 
-create or replace function cris_crash_update()
+create or replace function db.cris_crash_update()
 returns trigger
 language plpgsql
 as $$
 DECLARE
-   conflict_detected boolean := false; 
    vz_record  record;
 BEGIN
-    SELECT INTO vz_record *
-        FROM  db.vz_crashes where crash_id = new.crash_id;
-
-    if OLD.road_type_id != NEW.road_type_id and NEW.road_type_id != vz_record.road_type_id then
-        RAISE NOTICE 'Conflict detected in road_type_id between new CRIS value (%), old CRIS value (%) and current VZ value (%)', NEW.road_type_id, OLD.road_type_id, vz_record.road_type_id;
-        insert into db.conflicts (crash_id, table_name, record ) values (NEW.crash_id, 'crashes', row_to_json(NEW));
-        RETURN NULL;
-    end if;
-
     RAISE NOTICE 'Updating crash ID % due to crish_crash update', new.crash_id;
-    
+
+    SELECT INTO vz_record *
+        FROM db.vz_crashes where crash_id = new.crash_id;
+
     UPDATE
         db.crashes
     SET
@@ -159,35 +148,37 @@ $$;
 create trigger update_crash_from_cris_update
 after update on db.cris_crashes
 for each row
-execute procedure cris_crash_update();
+execute procedure db.cris_crash_update();
 
 
 
-create or replace function update_crash_location()
+create or replace function db.update_crash_location()
 returns trigger
 language plpgsql
 as $$
 begin
-    if (
-        new.latitude IS NOT NULL AND new.longitude IS NOT NULL AND
-        (new.latitude != old.latitude OR new.longitude != old.longitude)) THEN
-        RAISE NOTICE 'Updating location ID for crash ID: %', new.crash_id;
-        new.geog = ST_SETSRID(ST_MAKEPOINT(new.longitude, new.latitude), 4326);
-        new.location_id = (
-            SELECT
-                location_id
-            FROM
-                atd_txdot_locations
-            WHERE
-                location_group = 1 -- level 1-4 polygons
-                AND st_contains(geometry, new.geog::geometry)
-            LIMIT 1);
-            RAISE NOTICE 'Found location: %', new.location_id;
+    if (new.latitude is distinct from old.latitude OR new.longitude is distinct from old.longitude) THEN
+        if (new.latitude IS NOT NULL AND new.longitude IS NOT NULL) THEN
+            RAISE NOTICE 'Updating location ID for crash ID: %', new.crash_id;
+            new.geog = ST_SETSRID(ST_MAKEPOINT(new.longitude, new.latitude), 4326);
+            new.location_id = (
+                SELECT
+                    location_id
+                FROM
+                    atd_txdot_locations
+                WHERE
+                    location_group = 1 -- level 1-4 polygons
+                    AND st_contains(geometry, new.geog::geometry)
+                LIMIT 1);
+                RAISE NOTICE 'Found location: % compared to previous location: %', new.location_id, old.location_id;
+            ELSE
+                RAISE NOTICE 'Setting geography and location ID to null';
+                -- reset location ID
+                new.geog = NULL;
+                new.location_id = NULL;
+        END IF;
         ELSE
-            RAISE NOTICE 'Setting geography and location ID to null';
-            -- reset location ID
-            new.geog = NULL;
-            new.location_id = NULL;
+            RAISE NOTICE 'Crash latitude and longitude have not changed. No location update needed.';
     END IF;
     RETURN NEW;
 END;
@@ -196,20 +187,20 @@ $$;
 create trigger update_crash_location
 before insert or update on db.crashes
 for each row
-execute procedure update_crash_location();
+execute procedure db.update_crash_location();
 
 ---------------------------------------------
 --- Create unit triggers -------------------
 ---------------------------------------------
-create or replace function cris_unit_insert_rows()
+create or replace function db.cris_unit_insert_rows()
 returns trigger
 language plpgsql
 as
 $$
 BEGIN
-    RAISE NOTICE 'Inserting vz_units and units rows';
+    RAISE NOTICE 'Inserting blank vz_units row and copying entire row to units';
     -- insert new (editable) vz record (only unit + crash ID)
-    INSERT INTO db.vz_units (unit_id) values (new.unit_id);
+    INSERT INTO db.vz_units (unit_id, crash_id) values (new.unit_id, new.crash_id);
     -- insert new combined / official record
     INSERT INTO db.units (unit_id, crash_id, unit_type_id) values (
         new.unit_id, new.crash_id, new.unit_type_id
@@ -221,11 +212,11 @@ $$;
 create trigger insert_new_cris_unit_into_vz_unit_and_units
 after insert on db.cris_units
 for each row
-execute procedure cris_unit_insert_rows();
+execute procedure db.cris_unit_insert_rows();
 
 
 
-create or replace function vz_unit_update()
+create or replace function db.vz_unit_update()
 returns trigger
 language plpgsql
 as $$
@@ -234,7 +225,7 @@ BEGIN
     UPDATE
         db.units
     SET
-        crash_id = COALESCE(new.unit_id, cris_units.crash_id),
+        unit_id = COALESCE(new.unit_id, cris_units.unit_id),
         unit_type_id = COALESCE(new.unit_type_id, cris_units.unit_type_id)
     FROM (
         SELECT
@@ -250,9 +241,9 @@ $$;
 create trigger update_unit_from_vz_unit_update
 after update on db.vz_units
 for each row
-execute procedure vz_unit_update();
+execute procedure db.vz_unit_update();
 
-create or replace function cris_unit_update()
+create or replace function db.cris_unit_update()
 returns trigger
 language plpgsql
 as $$
@@ -261,7 +252,7 @@ BEGIN
     UPDATE
         db.units
     SET
-        crash_id = COALESCE(vz_units.unit_id, new.crash_id),
+        unit_id = COALESCE(vz_units.unit_id, new.unit_id),
         unit_type_id = COALESCE(vz_units.unit_type_id, new.unit_type_id)
     FROM (
         SELECT
@@ -277,7 +268,7 @@ $$;
 create trigger update_unit_from_cris_update
 after update on db.cris_units
 for each row
-execute procedure cris_unit_update();
+execute procedure db.cris_unit_update();
 
 
 ---------------------------------------------
@@ -297,3 +288,6 @@ insert into db.unit_types (description) values
 ('spaceship'),
 ('bicycle'),
 ('other');
+
+-- set the global search path to the db schema first (just for funzees)
+alter role visionzero set search_path to db, public;
