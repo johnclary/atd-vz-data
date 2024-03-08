@@ -10,12 +10,26 @@ The data model uses the concept of "private" pre-processing tables which hold da
 
 ## Get it running
 
+Add my fork as a remote to your vz-data repo. Then checkout my `5976-jc-data-model-proto` branch.
+
+```bash
+$ git remote add john-data-model git@github.com:johnclary/atd-vz-data.git
+$ git fetch john-data-model
+$ git checkout john-data-model/15976-jc-data-model-proto
+```
+
 Start the VZ cluster and apply migrations as you would normally, from this branch (`15976-jc-data-model-proto`). You can inspect the migration file in  `1709836840391_data_model_init` to inspect the table + trigger definitions.
 
 To start over, you can run:
 
 ```shell
 $ hasura migrate apply --down 1 && hasura migrate apply
+```
+
+When you're done testing, remove my fork from your local repo.
+
+```shell
+$ git remote rm john-data-model
 ```
 
 ## Tests
@@ -161,7 +175,7 @@ from
         group by
             crash_id
     ) unit_types on unit_types.crash_id = crashes.crash_id
-    where crashes.crash_id = 123456;
+    where crashes.crash_id = 9999999;
 
 -- 7b. query for 100k crashes
 select
@@ -200,6 +214,8 @@ order by
     count_of_crashes DESC
 limit 100;
 ```
+
+*Side note: it would be a nice performance optimization to use integers instead of strings for location IDs.*
 
 #### 9. Add a new editable column to crashes
 
