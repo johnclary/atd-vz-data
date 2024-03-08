@@ -4,13 +4,13 @@ In which everyone else's ideas have been plagiarized.
 
 ## Overview
 
-The data model uses the concept of "private" pre-processing tables which hold data from CRIS and user edits. Data from private tables is pushed (via trigger) into a public table that is used as the official source of truth Vision Zero data consumers. A more detailed diagram is available [here](https://excalidraw.com/#json=NuBo04VYd2x53aJZBFt9c,o-JWjT8z02KJig02E2DUTg).
+The data model uses the concept of "private" pre-processing tables which hold data from CRIS and user edits. Data from private tables is pushed (via trigger) into a public table that is used as the official source of truth. A more detailed diagram is available [here](https://excalidraw.com/#json=NuBo04VYd2x53aJZBFt9c,o-JWjT8z02KJig02E2DUTg).
 
 ![data model overview diagram](data_model_overview.png)
 
 ## Get it running
 
-Start the VZ cluster as you would normally, from master. The migration `1709836840391_data_model_init` will create a new schema called `db` and install the tables/triggers/etc.
+Start the VZ cluster and apply migrations as you would normally, from this branch (`15976-jc-data-model-proto`). You can inspect the migration file in  `1709836840391_data_model_init` to inspect the table + trigger definitions.
 
 To start over, you can run:
 
@@ -30,7 +30,7 @@ $ hasura migrate apply --down 1 && hasura migrate apply
 SET client_min_messages TO WARNING;
 ```
 
-Download `crashes.csv` and `units.csv` from the Drive folder and save them in this directory (`/atd-vzd`). mport each file into `cris_crashes` and `cris_units`, respectively. This will take a few minutes.
+Download `crashes.csv` and `units.csv` from the Drive folder and save them in this directory (`/atd-vzd`). Import each file into `cris_crashes` and `cris_units`, respectively. This will take a few minutes.
 
 ```shell
 # import crashes into db.cris_crashes
@@ -117,7 +117,7 @@ Observe that the `location_id` of the `crashes` record changes to `AA7729AE83`.
 update vz_units set unit_type_id = 3 where unit_id = 987654321;
 ```
 
-#### 4. CRIS user updates the crash lat/lon, and road type
+#### 4. CRIS user updates the crash lat/lon and road type
 
 ```sql
 update cris_crashes set latitude = 1, longitude = 1, road_type_id = 5 where crash_id = 9999999;
@@ -140,25 +140,47 @@ update vz_units set unit_type_id = 90001 where unit_id = 987654322;
 
 #### 7. Create a query that demonstrates the correct source of truth when crashes and units have edits from both CRIS and the VZ user
 
-The truth is stored in the `crashes` and `units` table. So just query them as needed.
+The truth is stored in the `crashes` and `units` table. So we can just query them as needed. These queries also construct the `unique_unit_types` column, per the requirements. In reality we would establish dedicated views for columns such as this which be efficiently calculated on the fly.
 
 ```sql
 -- 7a. Query for a single crash by ID
 select
     crashes.*,
-    road_types.description as road_type_description
+    road_types.description as road_type_description,
+    unit_types.unique_unit_types
 from
     crashes
     left join road_types on crashes.road_type_id = road_types.id
-    where crash_id = 123456;
+    left join (
+        select
+            crash_id,
+            array_agg(distinct unit_types.description) as unique_unit_types
+        from
+            units
+            left join unit_types on unit_types.id = units.unit_type_id
+        group by
+            crash_id
+    ) unit_types on unit_types.crash_id = crashes.crash_id
+    where crashes.crash_id = 123456;
 
--- 7b. query for a large number of crashes
+-- 7b. query for 100k crashes
 select
     crashes.*,
-    road_types.description as road_type_description
+    road_types.description as road_type_description,
+    unit_types.unique_unit_types
 from
     crashes
     left join road_types on crashes.road_type_id = road_types.id
+    left join (
+        select
+            crash_id,
+            array_agg(distinct unit_types.description) as unique_unit_types
+        from
+            units
+            left join unit_types on unit_types.id = units.unit_type_id
+        group by
+            crash_id
+    ) unit_types on unit_types.crash_id = crashes.crash_id
     limit 100000;
 ```
 
